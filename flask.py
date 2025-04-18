@@ -1,10 +1,9 @@
-from flask import Flask, render_template_string, request, redirect, session, url_for, jsonify
+from bottle import Bottle, run, request, redirect, template, response
 import socket
 import threading
 import json
 
-app = Flask(__name__)
-app.secret_key = 'change_this_secret_key'
+app = Bottle()
 
 # Configuration
 SERVER_HOST = '127.0.0.1'
@@ -18,9 +17,9 @@ messages = []
 hand = []
 players = []
 history = []
+authenticated = False
 
-# HTML Templates
-LOGIN_HTML = """
+LOGIN_HTML = '''
 <!DOCTYPE html>
 <html>
 <head><title>Connexion Love Letter</title></head>
@@ -32,9 +31,9 @@ LOGIN_HTML = """
 </form>
 </body>
 </html>
-"""
+'''
 
-GAME_HTML = """
+GAME_HTML = '''
 <!DOCTYPE html>
 <html>
 <head>
@@ -47,13 +46,15 @@ GAME_HTML = """
 </head>
 <body>
 <h2>Bienvenue dans Love Letter</h2>
-<p><strong>Joueurs :</strong> {{ players }}</p>
-<p><strong>Ta main :</strong> {{ hand }}</p>
+<p><strong>Joueurs :</strong> {{players}}</p>
+<p><strong>Ta main :</strong> {{hand}}</p>
 <form method="post" action="/play">
     <p>
         Choisis une carte :
         <select name="card">
-            {% for c in hand %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+            % for c in hand:
+            <option value="{{c}}">{{c}}</option>
+            % end
         </select>
     </p>
     <p>
@@ -69,16 +70,16 @@ GAME_HTML = """
 
 <h3>Historique par joueur</h3>
 <div class="card-list">
-{% for joueur, cartes in player_history.items() %}
-    <strong>{{ joueur }}</strong>: {{ ", ".join(cartes) if cartes else '---' }}<br>
-{% endfor %}
+% for joueur, cartes in player_history.items():
+    <strong>{{joueur}}</strong>: {{', '.join(cartes) if cartes else '---'}}<br>
+% end
 </div>
 
 <h3>Messages</h3>
 <ul>
-{% for m in messages %}
-    <li>{{ m }}</li>
-{% endfor %}
+% for m in messages:
+    <li>{{m}}</li>
+% end
 </ul>
 
 <form method="post" action="/ready">
@@ -86,36 +87,35 @@ GAME_HTML = """
 </form>
 </body>
 </html>
-"""
+'''
 
-# Routes
-@app.route('/', methods=['GET', 'POST'])
+@app.route('/', method=['GET', 'POST'])
 def login():
+    global authenticated
     if request.method == 'POST':
-        if request.form['password'] == ADMIN_PASSWORD:
-            session['auth'] = True
-            return redirect(url_for('game'))
-    return render_template_string(LOGIN_HTML)
+        if request.forms.get('password') == ADMIN_PASSWORD:
+            authenticated = True
+            redirect('/game')
+    return LOGIN_HTML
 
 @app.route('/game')
 def game():
-    if not session.get('auth'):
-        return redirect(url_for('login'))
-    # Créer un historique par joueur
+    if not authenticated:
+        redirect('/')
     player_history = {}
     for entry in history:
         joueur = entry['player']
         carte = entry['card']
         player_history.setdefault(joueur, []).append(carte)
-    return render_template_string(GAME_HTML, hand=hand, players=players, messages=messages[-10:], history=history, player_history=player_history)
+    return template(GAME_HTML, hand=hand, players=players, messages=messages[-10:], history=history, player_history=player_history)
 
-@app.route('/play', methods=['POST'])
+@app.route('/play', method='POST')
 def play():
-    if not session.get('auth'):
-        return redirect(url_for('login'))
-    card = request.form.get('card')
-    target = request.form.get('target')
-    guess = request.form.get('guess')
+    if not authenticated:
+        redirect('/')
+    card = request.forms.get('card')
+    target = request.forms.get('target')
+    guess = request.forms.get('guess')
     msg = {
         'type': 'play',
         'card': card,
@@ -124,15 +124,15 @@ def play():
     }
     if sock:
         sock.send((json.dumps(msg) + '\n').encode())
-    return redirect(url_for('game'))
+    redirect('/game')
 
-@app.route('/ready', methods=['POST'])
+@app.route('/ready', method='POST')
 def ready():
-    if not session.get('auth'):
-        return redirect(url_for('login'))
+    if not authenticated:
+        redirect('/')
     if sock:
         sock.send((json.dumps({"type": "ready"}) + '\n').encode())
-    return redirect(url_for('game'))
+    redirect('/game')
 
 # Socket communication
 def receive_from_server():
@@ -171,4 +171,4 @@ if __name__ == '__main__':
     name = input("Entrez votre nom : ")
     sock.send((json.dumps({"type": "name", "name": name}) + '\n').encode())
     threading.Thread(target=receive_from_server, daemon=True).start()
-    app.run(host='0.0.0.0', port=443)
+    run(app, host='0.0.0.0', port=5000)
